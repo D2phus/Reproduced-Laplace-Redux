@@ -11,30 +11,34 @@ from backpack.extensions import (
     KFLR)
 
 class GGNCurvature(CurvatureInterface): 
-    """access curvature for a model and corresponding log likelihood. The Hessian is approximated with generalized Gauss-Newton matrix. """
+    """generalized Gauss-Newton approximation. """
+    
     def full(self, x, y): 
         """full Hessian approximated with the generalized Gauss-Newton matrix. 
         G:= \sum _n ^N J(x_n) (\triangledown _f ^2 \log p(y_n|f)|_{f=f_{\theta_{MAP}}(x_\theta)})J(x_n)^T
         where $\triangledown _f ^2 \log p(y_n|f)|_{f=f_{\theta_{MAP}}(x_\theta)}$ of shape (out_features, out_features) is a Hessian of log-likelihood of y_n w.r.t. model output. 
         
-        1. regression: TODO
-        2. classification: turn categorical outputs into probability distribution by applying softmax, 
-        then the Hessian is diag(p) - pp^T 
+        1. regression: Identity.
+        2. classification: Softmax to turn the output into probability distribution.
+        the Hessian of Softmax: diag(p) - pp^T.
         
         Returns: 
         H_ggn of shape (num_params, num_params)
         loss
         """
-        Js, out = self.jacobians(x) # model outputs' Jacobians of shape (batch_size, num_params, out_features), and model output of shape (batch_size, out_features)
+        if self.stochastic: 
+            raise ValueError('stochastic method not available for full GGN. ')
+            
+        Js, out = self.jacobians(x) # model outputs' Jacobians of shape (batch_size, out_features, num_params), and model output of shape (batch_size, out_features)
         loss = self.lossfunc(out, y)
         
         if self.regression: 
-            H_ggn = torch.einsum("imk, ink->mn", Js, Js)
+            H_ggn = torch.einsum("ikm, ikn->mn", Js, Js)
         else: 
-            # classification. The 2nd derivative for log likelihood is diag(p) - pp^T
-            ps = torch.softmax(out, dim=-1) # turn categorical outputs into probability distribution
-            H_lik = torch.diag_embed(ps) - torch.einsum('mk,mc->mck', ps, ps) # of shape (batch_size, out_features, out_features)
-            H_ggn = torch.einsum('mpc,mck,mqk->pq', Js, H_lik, Js)
+            # classification
+            p = torch.softmax(out, dim=-1) 
+            H_lik = torch.diag_embed(p) - torch.einsum('mk,mc->mck', p, p) # of (batch_size, out_features, out_features)
+            H_ggn = torch.einsum('mcp,mck,mkq->pq', Js, H_lik, Js)
         return H_ggn, self.factor * loss.detach() # note that H_ggn is not derived from log-likelihoods gradients, which means no factor.
     
     def diag(self, x, y):
@@ -73,17 +77,21 @@ class GGNCurvature(CurvatureInterface):
         loss
         """
         raise ValueError('`kron` method is not available.')
-        #context = KFAC if self.stochastic else KFLR
-        #out = self.model(x)
-        #loss = self.lossfunc(out, y)
-        #with backpack(context()):
-        #    loss.backward() # store the output list in `kfac`/`kflr`
+        context = KFAC if self.stochastic else KFLR
+        out = self.model(x)
+        loss = self.lossfunc(out, y)
+        with backpack(context()):
+            loss.backward() # store the output list in `kfac`/`kflr`
             
         # TODO
-        #if self.stochastic: 
-        #    kron = torch.cat([param.kfac for param in self.model.parameters()])
-        #else:
-        #    kron = torch.cat([param.kflr for param in self.model.parameters()])
-        #return self.factor * kron, self.factor * loss.detach()
-    
-    
+        kronB = self._get_kronB()
+        
+        
+    def _get_kronB(self):
+        """return the list of the second Kronecker term for each parameter. 
+        Returns: [list, list...] of length (num_params)"""
+        if self.stochastic:
+            kronB = [param.kfac for param in self.model.parameters()]
+        else:
+            kronB = [param.kflr for param in self.model.parameters()]
+        return kronB

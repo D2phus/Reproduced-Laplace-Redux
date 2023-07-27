@@ -43,14 +43,14 @@ class BayesianLinearRegression():
         return cov_lik + cov_prior
     
     @property
-    def posterior_var(self): 
+    def posterior_cov(self): 
         """the parameter variance of shape (num_params, num_params)"""
         return torch.linalg.inv(self.posterior_precision)
         
     @property 
     def mean(self): 
         """the parameter posterior mean of shape (num_params, 1)"""
-        return (self.noise_precision*self.posterior_var @self.X.T@self.y)
+        return (self.noise_precision*self.posterior_cov @self.X.T@self.y)
     
     @property
     def log_det_posterior_precision(self): 
@@ -77,15 +77,15 @@ class BayesianLinearRegression():
     def predict(self, X_test): 
         """the prediction p(y|\omega, D)
         Args: 
-        X_test of shape (num_samples, num_params-1)
+        X_test of shape (batch_size, num_params-1)
         Returns: 
-        pred_mean of shape (num_samples)
-        pred_var of shape (num_samples, num_samples)
+        pred_mean of shape (batch_size, 1)
+        pred_var of shape (batch_size, 1)
         """
-        num_samples = X_test.shape[0]
         X_test = torch.cat((X_test, torch.ones(X_test.shape[0], 1)), 1) 
+        
         pred_mean = X_test@self.mean
-        pred_var = torch.diag(torch.ones(num_samples)*(self.sigma_noise**2)) + X_test@self.posterior_var@X_test.T
+        pred_var = self.sigma_noise**2 + torch.diagonal(X_test@self.posterior_cov@X_test.T)
         return pred_mean, pred_var
         
     

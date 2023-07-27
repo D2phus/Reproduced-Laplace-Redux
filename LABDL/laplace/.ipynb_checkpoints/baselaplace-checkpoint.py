@@ -49,18 +49,24 @@ class BaseLaplace:
         self.regression = regression
         self.stochastic = stochastic
         
-        backend = GGNCurvature if H_approximation == 'GGN' else EFCurvature
-        self._backend = None
-        self._backend_cls = backend
+        #backend = GGNCurvature if H_approximation == 'GGN' else EFCurvature
+        #self._backend = None
+        #self._backend_cls = backend
+        if H_approximation == 'GGN':
+            self.backend = GGNCurvature(self.model, regression, stochastic)
+        else: 
+            self.backend = EFCurvature(self.model, regression, stochastic)
         
         self.loss = 0 
         self.num_samples = 0
         
-    @property
-    def backend(self): 
-        if self._backend is None:
-            self._backend = self._backend_cls(self.model, self.regression, self.stochastic)
-        return self._backend
+    #@property
+    #def backend(self):
+    #    if self._backend is None: 
+    #        self._backend = self._backend_cls(self.model, self.regression, self.stochastic)
+    #    print(list(self._backend.model.parameters()))
+    #    return self._backend
+    
     
     @property
     def prior_mean(self):
@@ -68,7 +74,7 @@ class BaseLaplace:
     
     @prior_mean.setter
     def prior_mean(self, prior_mean): 
-        """The setter for attribute prior_mean, format the type as torch.Tensor of shape (1) or (num_params)
+        """The setter for prior_mean, format the type as torch.Tensor of shape (1) or (num_params)
         Args:
         prior_mean: real scalar, torch.Tensor of shape (1) or (num_params)
         """
@@ -89,7 +95,7 @@ class BaseLaplace:
     
     @sigma_noise.setter
     def sigma_noise(self, sigma_noise): 
-        """The setter for attribute sigma_noise, format the type as torch.Tensor of shape (1)
+        """The setter for sigma_noise, format the type as torch.Tensor of shape (1)
         Args:
         prior_mean: real scalar, torch.Tensor of shape (1)
         """
@@ -179,6 +185,7 @@ class BaseLaplace:
         
         x_sample, y_sample = next(iter(train_loader))
         self.out_features = y_sample.shape[-1] 
+        setattr(self.model, 'out_features', self.out_features) # save out_features for jacobians computing.
         
         for x, y in train_loader: 
             self.model.zero_grad()
@@ -226,16 +233,21 @@ class BaseLaplace:
         return self.log_likelihood + 1/2*(self.log_det_ratio-scatter)
     
     
-    def predict(self, X, pred_type='glm', glm_link_approx='mci', num_samples=100): 
+    def predict(self, X, pred_type='glm', glm_link_approx='probit', num_samples=100): 
         """The posterior predictive on input X.
         Args: 
         X of shape (batch_size, in_features)
-        pred_type: ['glm', 'mci', 'gp'], the posterior predictive approximation options: linearized neural network with gaussian likelihood, MC integration, or gaussian process inference. 
-        glm_link_approx: ['mci'], how to approximate the classification link function for the glm.
+        pred_type: ['glm', 'mci'], the posterior predictive approximation options: linearized neural network with gaussian likelihood, or MC integration.
+        glm_link_approx: ['mci', 'probit'], how to approximate the classification link function for the glm.
         
         Returns: 
-        mean, variance of the predictive 
+        mean, variance of shape (batch_size, out_features)
         """
+        if pred_type not in ['mci', 'glm']: 
+            raise ValueError('Invalid prediction types.')
+        if glm_link_approx not in ['mci', 'probit', 'bridge']:
+            raise ValueError('Invalid link approximation.')
+            
         if pred_type == 'mci': 
             samples = self._mci_predictive_samples(X, num_samples)
             if self.regression: 
@@ -244,15 +256,19 @@ class BaseLaplace:
                 return samples.mean(dim=0), None
             
         elif pred_type == 'glm': 
-            f_mu, f_cov = self._glm_output_distribution(X)    
-            # + \sigma^2 I?
+            f_mu, f_cov = self._glm_output_distribution(X) 
+            f_var = torch.diagonal(f_cov, dim1=1, dim2=2) # of shape (batch_size, out_features) 
             if self.regression: 
-                return f_mu, f_cov
+                return f_mu, f_var + self.sigma_noise**2 # y_var = f_var + sigma^2!
             else: # classification
                 if glm_link_approx == 'mci': 
                     return self.predictive_samples(X, num_samples).mean(dim=0), None
                 elif glm_link_approx == 'probit': 
-                    pass # TODO
+                    t = f_mu / torch.sqrt(1+pi/8*f_var)
+                    return torch.softmax(t), None
+                else: # laplace bridge
+                    pass
+                    
                     
     def predictive_samples(self, X, pred_type='glm', num_samples=100): 
         """samples from the posterior predictive on input X.
@@ -305,6 +321,6 @@ class BaseLaplace:
         f_cov of shape (batch_size, out_features, out_features)
         """
         Js, f_mu = self.backend.jacobians(X) 
-        f_cov =  torch.einsum("npc, pq, nqk-> nck", Js, self.posterior_covariance, Js)
+        f_cov =  torch.einsum("ncp, pq, nkq-> nck", Js, self.posterior_covariance, Js)
         return f_mu, f_cov
     

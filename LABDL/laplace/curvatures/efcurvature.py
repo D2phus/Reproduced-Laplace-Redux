@@ -8,7 +8,8 @@ from backpack.extensions import (
     SumGradSquared, )
 
 class EFCurvature(CurvatureInterface): 
-    """access curvature for a model and corresponding log likelihood. The Hessian is approximated with the emprical Fisher. """
+    """Empirical Fisher approximation. """
+    
     def full(self, x, y): 
         """full Hessian approximated with the empirical Fisher by sampling the training targets instead of taking the expectation.
         
@@ -43,5 +44,5 @@ class EFCurvature(CurvatureInterface):
         return self.factor * diag_ef, self.factor * loss.detach()
         
     def kron(self, x, y): 
-        raise ValueError('`kron` method is not available.')
+        raise ValueError('`kron` method not available for EF.')
     
