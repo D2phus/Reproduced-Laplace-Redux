@@ -1,2 +1,1 @@
-from .efcurvature import EFCurvature
-from .ggncurvature import GGNCurvature
+from .backpack import BackPackGGN, BackPackEF

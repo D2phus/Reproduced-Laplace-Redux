@@ -25,6 +25,7 @@ def train(model: nn.Module,
     
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     criterion = nn.MSELoss() if regression else nn.BCELoss()
+    N = len(dataloader_train.dataset)
     
     losses_train = []
     for epoch in range(num_epoches):
@@ -32,7 +33,7 @@ def train(model: nn.Module,
             # forward + backward + optimize 
         
             loss_train = train_epoch(criterion, model, dataloader_train, optimizer)
-            
+            loss_train = loss_train / N
             #wandb.log({
             #    "train_loss": loss_train, 
             #    "val_loss": loss_val, 
@@ -53,7 +54,7 @@ def train(model: nn.Module,
                 #    "fit": fig
                 #})
     print("Finished Training.")
-    loss = sum(losses_train)
+    loss = sum(losses_train) / num_epoches
     return loss
         
 
@@ -62,7 +63,7 @@ def train_epoch(criterion,
                 dataloader: torch.utils.data.DataLoader, 
                 optimizer: torch.optim.Adam):
     model.train()
-    avg_loss = 0.0
+    loss = 0.0
     for batch in dataloader:
         features, targets = batch
 
@@ -75,9 +76,9 @@ def train_epoch(criterion,
         step_loss.backward()
         optimizer.step()
 
-        avg_loss += step_loss
+        loss += step_loss
         
-    return avg_loss / len(dataloader)
+    return loss
     
 def evaluate_epoch(criterion, 
                    model: nn.Module, 
